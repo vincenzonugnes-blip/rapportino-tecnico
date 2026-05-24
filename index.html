@@ -97,6 +97,15 @@
 <script>
 let bollaBase64 = null;
 
+window.addEventListener('load', () => {
+  const saved = localStorage.getItem('rapportino_apikey');
+  if (saved) document.getElementById('apikey').value = saved;
+});
+
+document.getElementById('apikey').addEventListener('change', e => {
+  localStorage.setItem('rapportino_apikey', e.target.value.trim());
+});
+
 document.getElementById('bolla').addEventListener('change', e => {
   const f = e.target.files[0];
   if (!f) { bollaBase64 = null; return; }
