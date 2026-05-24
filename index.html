@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Generatore Rapportini Tecnici</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #f5f5f5; color: #1a1a1a; padding: 20px; }
+  h1 { font-size: 18px; font-weight: 500; margin-bottom: 20px; }
+  .card { background: #fff; border: 1px solid #e0e0e0; border-radius: 10px; padding: 14px; margin-bottom: 12px; }
+  label { font-size: 12px; color: #666; display: block; margin-bottom: 6px; }
+  select, input, textarea { width: 100%; background: #f9f9f9; border: 1px solid #ddd; border-radius: 6px; padding: 8px 10px; font-size: 14px; color: #1a1a1a; outline: none; font-family: inherit; }
+  input[type=password] { font-family: monospace; }
+  textarea { resize: vertical; line-height: 1.6; }
+  .row { display: flex; gap: 10px; }
+  .row .card { flex: 1; }
+  button { width: 100%; padding: 12px; background: #1a1a1a; color: #fff; border: none; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; margin-bottom: 12px; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-copy { width: auto; padding: 6px 14px; background: #f0f0f0; color: #1a1a1a; font-size: 12px; margin-top: 8px; margin-bottom: 0; border-radius: 6px; }
+  .output-label { font-size: 11px; font-weight: 500; color: #888; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+  .output-box { background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 8px; padding: 12px 14px; font-size: 13px; line-height: 1.7; white-space: pre-wrap; min-height: 60px; }
+  .errore { background: #fff0f0; border: 1px solid #ffcccc; border-radius: 8px; padding: 10px 14px; font-size: 13px; color: #cc0000; margin-top: 12px; display: none; }
+  .loading { text-align: center; padding: 16px; color: #888; font-size: 13px; display: none; }
+  #risultato { display: none; }
+  #materiali-suggeriti { display: none; }
+  .bolla-status { font-size: 12px; color: #888; margin-top: 4px; }
+</style>
+</head>
+<body>
+
+<h1>Generatore Rapportini Tecnici</h1>
+
+<div class="card">
+  <label>API Key Anthropic (solo in memoria, non salvata)</label>
+  <input type="password" id="apikey" placeholder="sk-ant-...">
+</div>
+
+<div class="row">
+  <div class="card">
+    <label>Tipo intervento</label>
+    <select id="tipo">
+      <option value="canone">Canone (manutenzione ordinaria)</option>
+      <option value="consuntivo">Consuntivo (intervento extra)</option>
+    </select>
+  </div>
+  <div class="card">
+    <label>Tipo impianto</label>
+    <select id="impianto">
+      <option value="elettrico">Elettrico</option>
+      <option value="idraulico">Idraulico / Termoidraulico</option>
+      <option value="misto">Misto (elettrico + idraulico)</option>
+      <option value="bms">BMS / Supervisione</option>
+    </select>
+  </div>
+</div>
+
+<div class="card">
+  <label>Descrivi cosa hai fatto</label>
+  <textarea id="descriz" rows="5" placeholder="es: ho sostituito il magnetotermico 16A sul quadro piano terra, era scattato per sovraccarico, verificato la linea e rimesso in servizio. Purgato il corpo scaldante bagno secondo piano."></textarea>
+</div>
+
+<div class="card">
+  <label>Materiali usati (opzionale)</label>
+  <textarea id="materiali" rows="2" placeholder="es: interruttore magnetotermico 16A curva C, valvola sferica 1/2, guarnizioni"></textarea>
+</div>
+
+<div class="card">
+  <label>Allega bolla PDF (opzionale)</label>
+  <input type="file" id="bolla" accept="application/pdf">
+  <p class="bolla-status" id="bolla-status"></p>
+</div>
+
+<button id="genera-btn" onclick="genera()">Genera rapportino</button>
+
+<div class="loading" id="loading">Elaborazione in corso...</div>
+
+<div id="risultato">
+  <div class="card">
+    <div class="output-label">Versione sintetica</div>
+    <div class="output-box" id="output-sintetico"></div>
+    <button class="btn-copy" onclick="copia('output-sintetico')">Copia</button>
+  </div>
+  <div class="card">
+    <div class="output-label">Versione professionale</div>
+    <div class="output-box" id="output-professionale"></div>
+    <button class="btn-copy" onclick="copia('output-professionale')">Copia</button>
+  </div>
+  <div class="card" id="materiali-suggeriti">
+    <div class="output-label">Suggerimento codici / modelli materiale</div>
+    <div class="output-box" id="output-materiali"></div>
+  </div>
+</div>
+
+<div class="errore" id="errore"></div>
+
+<script>
+let bollaBase64 = null;
+
+document.getElementById('bolla').addEventListener('change', e => {
+  const f = e.target.files[0];
+  if (!f) { bollaBase64 = null; return; }
+  const s = document.getElementById('bolla-status');
+  s.textContent = 'Caricamento...';
+  const r = new FileReader();
+  r.onload = () => { bollaBase64 = r.result.split(',')[1]; s.textContent = 'PDF caricato: ' + f.name; };
+  r.onerror = () => { s.textContent = 'Errore lettura PDF'; bollaBase64 = null; };
+  r.readAsDataURL(f);
+});
+
+function copia(id) {
+  const el = document.getElementById(id);
+  navigator.clipboard.writeText(el.textContent).then(() => {
+    const btn = el.nextElementSibling;
+    const orig = btn.textContent;
+    btn.textContent = 'Copiato!';
+    setTimeout(() => { btn.textContent = orig; }, 1500);
+  });
+}
+
+async function genera() {
+  const apikey = document.getElementById('apikey').value.trim();
+  const descriz = document.getElementById('descriz').value.trim();
+  if (!apikey) { mostraErrore('Inserisci la API key.'); return; }
+  if (!descriz) { mostraErrore('Inserisci la descrizione.'); return; }
+
+  const tipo = document.getElementById('tipo').value;
+  const impianto = document.getElementById('impianto').value;
+  const materiali = document.getElementById('materiali').value.trim();
+
+  const tipoLabel = tipo === 'canone' ? 'CANONE (manutenzione ordinaria contrattuale)' : 'CONSUNTIVO (intervento straordinario extra contratto)';
+  const impiantoLabel = { elettrico: 'Elettrico', idraulico: 'Idraulico/Termoidraulico', misto: 'Misto', bms: 'BMS/Supervisione' }[impianto];
+
+  const systemPrompt = `Sei un assistente tecnico per manutenzione elettrica e idraulica di impianti civili (pompe, quadri elettrici, UPS, BMS, cogeneratori, impianti termici). Il tecnico descrive informalmente un intervento. Genera due versioni per il rapportino aziendale field service.
+
+Tipo intervento: ${tipoLabel}
+Tipo impianto: ${impiantoLabel}
+
+${tipo === 'canone' ? "A CANONE: non citare costi, usa 'intervento eseguito nell'ambito del contratto di manutenzione ordinaria'." : "CONSUNTIVO: indica che l'intervento è extra contratto, elenca materiali forniti per supportare la fatturazione."}
+
+Rispondi SOLO con JSON valido, zero testo extra, zero backtick, zero markdown.
+Formato esatto: {"sintetica":"...","professionale":"...","materiali_suggeriti":"..."}
+
+sintetica: 2-4 righe, essenziale, tecnica.
+professionale: paragrafo formale con causa, intervento, materiali, esito, stato impianto.
+materiali_suggeriti: se materiali sono generici suggerisci 2-3 codici/modelli reali (ABB, Schneider, Calpeda, Grundfos ecc.). Se assenti o già specifici metti "".`;
+
+  const userContent = [];
+  if (bollaBase64) {
+    userContent.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: bollaBase64 } });
+    userContent.push({ type: 'text', text: 'Bolla allegata. Estrai i materiali e integrali nel rapportino.' });
+  }
+  userContent.push({ type: 'text', text: `Descrizione: ${descriz}${materiali ? '\nMateriali: ' + materiali : ''}` });
+
+  document.getElementById('risultato').style.display = 'none';
+  document.getElementById('errore').style.display = 'none';
+  document.getElementById('loading').style.display = 'block';
+  document.getElementById('genera-btn').disabled = true;
+
+  try {
+    const resp = await fetch('https://anthropic-proxy.vincenzonugnes.workers.dev', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apikey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 1000,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userContent }]
+      })
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json();
+      throw new Error(err.error?.message || 'Errore API ' + resp.status);
+    }
+
+    const data = await resp.json();
+    const raw = data.content.map(b => b.text || '').join('');
+    const clean = raw.replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(clean);
+
+    document.getElementById('output-sintetico').textContent = parsed.sintetica || '';
+    document.getElementById('output-professionale').textContent = parsed.professionale || '';
+
+    const matDiv = document.getElementById('materiali-suggeriti');
+    if (parsed.materiali_suggeriti && parsed.materiali_suggeriti.trim()) {
+      document.getElementById('output-materiali').textContent = parsed.materiali_suggeriti;
+      matDiv.style.display = 'block';
+    } else {
+      matDiv.style.display = 'none';
+    }
+
+    document.getElementById('risultato').style.display = 'block';
+  } catch (err) {
+    mostraErrore('Errore: ' + err.message);
+  } finally {
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('genera-btn').disabled = false;
+  }
+}
+
+function mostraErrore(msg) {
+  const el = document.getElementById('errore');
+  el.textContent = msg;
+  el.style.display = 'block';
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('genera-btn').disabled = false;
+}
+</script>
+</body>
+</html>
